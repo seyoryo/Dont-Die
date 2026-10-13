@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Don't Die</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+        }
+
+        #game-canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(20, 0, 0, 0.9);
+            z-index: 10;
+            backdrop-filter: blur(5px);
+            transition: opacity 0.2s;
+        }
+
+        #ui-main-menu {
+            background: rgba(20, 0, 0, 0.3);
+            backdrop-filter: none; /* Remove blur so we can clearly see the entity behind the text */
+        }
+
+        #ui-game-over {
+            background: rgba(50, 0, 0, 0.8);
+            backdrop-filter: none; /* Remove blur to see the entity clearly on death */
+        }
+
+        .hidden {
+            display: none !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 24px;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .title {
+            font-size: 5rem;
+            color: #ff3333;
+            text-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5rem;
+            text-align: center;
+        }
+
+        .btn {
+            background: #222;
+            border: 2px solid #ff3333;
+            color: #ff3333;
+            padding: 1rem 3rem;
+            font-size: 1.5rem;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0.5rem;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.2rem;
+            min-width: 250px;
+        }
+
+        .btn:hover {
+            background: #ff3333;
+            color: #000;
+            box-shadow: 0 0 20px rgba(255, 51, 51, 0.4);
+            transform: scale(1.05);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            border-color: #555;
+            color: #555;
+            background: #111;
+            box-shadow: none;
+            transform: none;
+            pointer-events: none;
+        }
+
+        .instructions {
+            color: #aaa;
+            margin-bottom: 2rem;
+            font-size: 1.2rem;
+            max-width: 600px;
+            text-align: center;
+            line-height: 1.6;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 1.5rem;
+            border: 1px dashed #555;
+        }
+
+        .danger-text { color: #ef4444; }
+        .success-text { color: #4ade80; }
+    </style>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+
+    <canvas id="game-canvas"></canvas>
+    <div id="crosshair" class="hidden">+</div>
+    
+    <div id="ui-hud" class="hidden" style="position: absolute; top: 20px; left: 20px; color: #ff3333; font-size: 1.5rem; font-weight: bold; z-index: 5; text-shadow: 0 0 5px rgba(255,51,51,0.5);">
+        Entities: <span id="hud-entity-count">1</span>
+    </div>
+
+    <!-- Main Menu -->
+    <div id="ui-main-menu" class="overlay">
+        <h1 class="title">Don't Die</h1>
+        <div class="instructions">
+            <p><strong>Controls:</strong></p>
+            <p>W, A, S, D to Move | Mouse to Look</p>
+            <p>Press <strong>ESC</strong> to Pause</p><br>
+            <p>Find the <span style="color: #ef4444; font-weight: bold; text-shadow: 0 0 8px rgba(239, 68, 68, 0.6);">Red Exit Door</span> to escape the level.</p>
+            <p>Beware of what lurks in the shadows...</p>
+        </div>
+        <button id="btn-play" class="btn">Play</button>
+    </div>
+
+    <!-- Pause Menu -->
+    <div id="ui-pause-menu" class="overlay hidden">
+        <h1 class="title" style="font-size: 4rem;">Paused</h1>
+        <button id="btn-resume" class="btn">Resume</button>
+        <button id="btn-main-menu-from-pause" class="btn">Main Menu (Reset Entities)</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="ui-game-over" class="overlay hidden">
+        <h1 class="title danger-text">You Were Caught</h1>
+        <p class="instructions" style="border-color: #ef4444;">The entity found you. You belong to the darkness now.</p>
+        <button id="btn-retry" class="btn">Try Again</button>
+        <button id="btn-main-menu-from-death" class="btn">Main Menu (Reset Entities)</button>
+    </div>
+
+    <!-- Win Screen -->
+    <div id="ui-win" class="overlay hidden">
+        <h1 class="title success-text">Escaped</h1>
+        <p class="instructions" style="border-color: #4ade80;">You found the exit and progressed to the next level.</p>
+        <button id="btn-next-level" class="btn">Play Next Level (Add Entity)</button>
+        <button id="btn-main-menu-from-win" class="btn">Main Menu (Reset Entities)</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // UI DOM Elements
+        const uiMainMenu = document.getElementById('ui-main-menu');
+        const uiPauseMenu = document.getElementById('ui-pause-menu');
+        const uiGameOver = document.getElementById('ui-game-over');
+        const uiWin = document.getElementById('ui-win');
+        const crosshair = document.getElementById('crosshair');
+        const uiHud = document.getElementById('ui-hud');
+        const hudEntityCount = document.getElementById('hud-entity-count');
+
+        // Game Configuration
+        const MAP_SIZE = 35; // Must be odd for maze generation
+        const CELL_SIZE = 10;
+        const WALL_HEIGHT = 12;
+        const PLAYER_SPEED = 45.0; // Increased speed
+        const PLAYER_RADIUS = 2.0;
+        const ENTITY_SPEED = 45.0; // Match player speed
+        
+        // Aesthetic Colors
+        const COLOR_WALL = 0x550000; 
+        const COLOR_FLOOR = 0x220000;
+        const COLOR_CEIL = 0x330000;
+        const COLOR_FOG = 0x000000;
+
+        // Global State
+        let gameState = 'MENU'; // MENU, PLAYING, PAUSED, GAMEOVER, WIN
+        let scene, camera, renderer, controls, clock;
+        let mazeGrid = [];
+        let mapMeshes = []; // Keep track to clean up
+        let exitPos = { x: 0, z: 0 };
+        
+        // Input state
+        const input = { forward: false, backward: false, left: false, right: false };
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        // Entity State
+        let entities = [];
+        let entityCount = 1;
+        let menuEntity = null;
+
+        // Audio State
+        let audioInitialized = false;
+        let humSound, stepSound, scareSound, scareNoise, staticSound;
+        let lastStepTime = 0;
+
+        function initAudio() {
+            if (audioInitialized) return;
+            Tone.start();
+            
+            // Fluorescent Hum
+            const humFilter = new Tone.Filter(200, "lowpass").toDestination();
+            humSound = new Tone.Oscillator(60, "sawtooth").connect(humFilter);
+            humSound.volume.value = -15;
+            humSound.start();
+
+            // Room Ambience
+            const noiseFilter = new Tone.Filter(400, "lowpass").toDestination();
+            const roomNoise = new Tone.Noise("brown").connect(noiseFilter);
+            roomNoise.volume.value = -20;
+            roomNoise.start();
+
+            // Footsteps
+            stepSound = new Tone.NoiseSynth({
+                noise: { type: 'pink' },
+                envelope: { attack: 0.01, decay: 0.1, sustain: 0 }
+            }).toDestination();
+            stepSound.volume.value = -15;
+
+            // Proximity Static
+            const staticFilter = new Tone.Filter(1500, "highpass").toDestination();
+            staticSound = new Tone.Noise("white").connect(staticFilter);
+            staticSound.volume.value = -100; // Start muted
+            staticSound.start();
+
+            // Jumpscare Screech (Distorted PolySynth + Noise Burst)
+            const scareDistortion = new Tone.Distortion(0.9).toDestination();
+            
+            scareSound = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "sawtooth" },
+                envelope: { attack: 0.01, decay: 3, sustain: 0.1, release: 2 }
+            }).connect(scareDistortion);
+            scareSound.volume.value = 5;
+            
+            scareNoise = new Tone.NoiseSynth({
+                noise: { type: 'white' },
+                envelope: { attack: 0.01, decay: 1.5, sustain: 0 }
+            }).connect(scareDistortion);
+            scareNoise.volume.value = 5;
+            
+            audioInitialized = true;
+        }
+
+        // Procedural Textures
+        function createTexture(type) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            if (type === 'wall') {
+                ctx.fillStyle = '#550000'; // Dark red
+                ctx.fillRect(0, 0, 256, 256);
+                ctx.fillStyle = 'rgba(100, 0, 0, 0.1)';
+                for(let i=0; i<256; i+=16) {
+                    ctx.fillRect(i, 0, 2, 256); // Wallpaper lines
+                }
+                // Noise
+                for(let i=0; i<10000; i++) {
+                    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(0,0,0,0.1)' : 'rgba(255,0,0,0.05)';
+                    ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2);
+                }
+            } else if (type === 'floor') {
+                ctx.fillStyle = '#220000'; // Dark red floor
+                ctx.fillRect(0, 0, 256, 256);
+                // Heavy Noise for carpet
+                for(let i=0; i<40000; i++) {
+                    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(20,0,0,0.2)' : 'rgba(80,0,0,0.1)';
+                    ctx.fillRect(Math.random()*256, Math.random()*256, 1, 1);
+                }
+            } else if (type === 'ceil') {
+                ctx.fillStyle = '#330000'; // Dark red ceil
+                ctx.fillRect(0, 0, 256, 256);
+                ctx.strokeStyle = '#110000';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(0, 0, 256, 256); // Tile border
+                // Pitting/dots for acoustic tile
+                for(let i=0; i<5000; i++) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(Math.random()*256, Math.random()*256, 1.5, 1.5);
+                }
+            }
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        function initEngine() {
+            const canvas = document.getElementById('game-canvas');
+            
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(COLOR_FOG);
+            scene.fog = new THREE.FogExp2(COLOR_FOG, 0.035);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+            camera.position.y = WALL_HEIGHT * 0.5;
+
+            // Ambient lighting
+            const ambientLight = new THREE.AmbientLight(0xff0000, 0.3); // Red ambient
+            scene.add(ambientLight);
+
+            // Controls setup
+            controls = new PointerLockControls(camera, document.body);
+            scene.add(controls.getObject());
+
+            clock = new THREE.Clock();
+
+            setupEventListeners();
+            setGameState('MENU'); // explicitly initialize the menu state and its 3D scene
+            requestAnimationFrame(gameLoop);
+        }
+
+        function setupEventListeners() {
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            const applyLockCooldown = () => {
+                const lockBtns = ['btn-play', 'btn-resume', 'btn-retry', 'btn-next-level'];
+                lockBtns.forEach(id => {
+                    const btn = document.getElementById(id);
+                    if (!btn) return;
+                    
+                    // Save original text and display waiting state
+                    const originalText = btn.dataset.text || btn.innerText;
+                    btn.dataset.text = originalText;
+                    btn.innerText = "Wait...";
+                    btn.disabled = true;
+                    
+                    // Re-enable button after browser cooldown expires
+                    setTimeout(() => {
+                        btn.innerText = originalText;
+                        btn.disabled = false;
+                    }, 1500); 
+                });
+            };
+
+            // PointerLock Events
+            controls.addEventListener('lock', () => {
+                if (gameState === 'MENU' || gameState === 'PAUSED' || gameState === 'GAMEOVER' || gameState === 'WIN') {
+                    if (gameState !== 'PAUSED') {
+                        generateNewGame();
+                    }
+                    setGameState('PLAYING');
+                }
+            });
+
+            controls.addEventListener('unlock', () => {
+                if (gameState === 'PLAYING') {
+                    setGameState('PAUSED');
+                }
+                // Trigger cooldown whenever pointer lock is lost
+                applyLockCooldown();
+            });
+
+            // Keyboard Events
+            const onKeyDown = (e) => {
+                switch(e.code) {
+                    case 'KeyW': case 'ArrowUp': input.forward = true; break;
+                    case 'KeyA': case 'ArrowLeft': input.left = true; break;
+                    case 'KeyS': case 'ArrowDown': input.backward = true; break;
+                    case 'KeyD': case 'ArrowRight': input.right = true; break;
+                }
+            };
+            const onKeyUp = (e) => {
+                switch(e.code) {
+                    case 'KeyW': case 'ArrowUp': input.forward = false; break;
+                    case 'KeyA': case 'ArrowLeft': input.left = false; break;
+                    case 'KeyS': case 'ArrowDown': input.backward = false; break;
+                    case 'KeyD': case 'ArrowRight': input.right = false; break;
+                }
+            };
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // Button Events
+            document.getElementById('btn-play').addEventListener('click', () => {
+                entityCount = 1;
+                initAudio();
+                controls.lock();
+            });
+            document.getElementById('btn-resume').addEventListener('click', () => controls.lock());
+            document.getElementById('btn-retry').addEventListener('click', () => {
+                entityCount = 1;
+                if (humSound) humSound.volume.rampTo(-15, 1);
+                controls.lock();
+            });
+            document.getElementById('btn-next-level').addEventListener('click', () => {
+                entityCount++;
+                controls.lock();
+            });
+
+            const returnToMenu = () => {
+                entityCount = 1;
+                if(controls.isLocked) controls.unlock();
+                setGameState('MENU');
+            };
+            document.getElementById('btn-main-menu-from-pause').addEventListener('click', returnToMenu);
+            document.getElementById('btn-main-menu-from-death').addEventListener('click', returnToMenu);
+            document.getElementById('btn-main-menu-from-win').addEventListener('click', returnToMenu);
+        }
+
+        function setGameState(newState) {
+            gameState = newState;
+            
+            // Hide all by default
+            uiMainMenu.classList.add('hidden');
+            uiPauseMenu.classList.add('hidden');
+            uiGameOver.classList.add('hidden');
+            uiWin.classList.add('hidden');
+            crosshair.classList.add('hidden');
+            uiHud.classList.add('hidden');
+
+            switch(newState) {
+                case 'MENU':
+                    if (staticSound) staticSound.volume.rampTo(-100, 0.2);
+                    uiMainMenu.classList.remove('hidden');
+                    buildMenuScene();
+                    break;
+                case 'PLAYING':
+                    crosshair.classList.remove('hidden');
+                    uiHud.classList.remove('hidden');
+                    hudEntityCount.innerText = entityCount;
+                    break;
+                case 'PAUSED':
+                    uiPauseMenu.classList.remove('hidden');
+                    break;
+                case 'GAMEOVER':
+                    uiGameOver.classList.remove('hidden');
+                    if (scareSound) scareSound.triggerAttackRelease(["C1", "C#1", "F#1", "G1", "C2"], "1m");
+                    if (scareNoise) scareNoise.triggerAttackRelease("1m");
+                    if (humSound) humSound.volume.rampTo(-40, 0.5); // quiet down
+                    if (staticSound) staticSound.volume.rampTo(-100, 0.2); // mute static
+                    if (controls.isLocked) controls.unlock();
+                    break;
+                case 'WIN':
+                    uiWin.classList.remove('hidden');
+                    if (staticSound) staticSound.volume.rampTo(-100, 0.2); // mute static
+                    if (controls.isLocked) controls.unlock();
+                    break;
+            }
+        }
+
+        function buildMenuScene() {
+            clearScene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.08); // Dark scary fog for menu
+
+            menuEntity = createEntity();
+            
+            // Position entity directly in front of the camera
+            menuEntity.mesh.position.set(0, 0, -12);
+            menuEntity.mesh.rotation.set(0, 0, 0);
+            scene.add(menuEntity.mesh);
+
+            // Dramatic red spotlight highlighting the entity
+            const redLight = new THREE.PointLight(0xff0000, 200, 50);
+            redLight.position.set(0, 6, -8);
+            scene.add(redLight);
+            mapMeshes.push(redLight); // Ensure it gets cleaned up when game starts
+
+            // Set camera position explicitly for the menu
+            camera.position.set(0, WALL_HEIGHT * 0.5, 0);
+            camera.lookAt(0, WALL_HEIGHT * 0.5, -12);
+        }
+
+        function createEntity() {
+            const entityMesh = new THREE.Group();
+            const darkMat = new THREE.MeshStandardMaterial({ 
+                color: 0x050505, 
+                roughness: 0.1, 
+                metalness: 0.8
+            });
+            
+            // The "Bacteria" is a chaotic cluster of thin, wire-like appendages
+            
+            // Chaotic Head/Body Cluster
+            const headGroup = new THREE.Group();
+            for(let i=0; i<6; i++) {
+                const blobGeo = new THREE.IcosahedronGeometry(Math.random() * 0.8 + 0.4, 1);
+                const blob = new THREE.Mesh(blobGeo, darkMat);
+                blob.position.set((Math.random()-0.5)*1.5, (Math.random()-0.5)*1.5, (Math.random()-0.5)*1.5);
+                blob.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
+                blob.scale.set(1, Math.random()*2+0.5, 1);
+                headGroup.add(blob);
+            }
+            headGroup.position.y = 10;
+            entityMesh.add(headGroup);
+
+            // Create wobbly wire limbs
+            const createLimb = (isArm) => {
+                const limb = new THREE.Group();
+                const segments = 3;
+                const len = isArm ? 2.5 : 3.3;
+                let parent = limb;
+                let meshes = [];
+                
+                for(let i=0; i<segments; i++) {
+                    const segGroup = new THREE.Group();
+                    // Very thin cylinder to look like wire
+                    const geo = new THREE.CylinderGeometry(0.08, 0.05, len, 5);
+                    geo.translate(0, -len/2, 0);
+                    const mesh = new THREE.Mesh(geo, darkMat);
+                    
+                    // Add chaotic bumps to the wire
+                    const bumpGeo = new THREE.SphereGeometry(0.15, 4, 4);
+                    const bump = new THREE.Mesh(bumpGeo, darkMat);
+                    bump.position.y = -len/2;
+                    mesh.add(bump);
+                    
+                    segGroup.add(mesh);
+                    segGroup.position.y = i === 0 ? 0 : -len;
+                    // Add slight random bend
+                    segGroup.rotation.z = (Math.random() - 0.5) * 0.4;
+                    segGroup.rotation.x = (Math.random() - 0.5) * 0.4;
+                    
+                    parent.add(segGroup);
+                    parent = segGroup;
+                    meshes.push(segGroup);
+                }
+                return { root: limb, joints: meshes };
+            };
+
+            const lArm = createLimb(true);
+            lArm.root.position.set(-1.5, 10, 0);
+            const rArm = createLimb(true);
+            rArm.root.position.set(1.5, 10, 0);
+            
+            const lLeg = createLimb(false);
+            lLeg.root.position.set(-0.5, 10, 0);
+            const rLeg = createLimb(false);
+            rLeg.root.position.set(0.5, 10, 0);
+
+            entityMesh.add(lArm.root, rArm.root, lLeg.root, rLeg.root);
+
+            // Extra hanging wires for the creepy look
+            const xWire1 = createLimb(true);
+            xWire1.root.position.set(0, 10.5, 1);
+            const xWire2 = createLimb(true);
+            xWire2.root.position.set(0, 10.5, -1);
+            entityMesh.add(xWire1.root, xWire2.root);
+
+            return {
+                mesh: entityMesh,
+                limbs: { 
+                    lArm: lArm.joints, 
+                    rArm: rArm.joints, 
+                    lLeg: lLeg.joints, 
+                    rLeg: rLeg.joints,
+                    head: headGroup,
+                    extra: [xWire1.joints, xWire2.joints]
+                }
+            };
+        }
+
+        function generateMazeData() {
+            // Initialize with walls (1)
+            mazeGrid = Array(MAP_SIZE).fill().map(() => Array(MAP_SIZE).fill(1));
+            
+            // Recursive backtracker
+            let startX = 1, startZ = 1;
+            mazeGrid[startZ][startX] = 0; // 0 is empty path
+            let stack = [{x: startX, z: startZ}];
+
+            const dirs = [{x: 0, z: -2}, {x: 2, z: 0}, {x: 0, z: 2}, {x: -2, z: 0}];
+
+            while (stack.length > 0) {
+                let current = stack[stack.length - 1];
+                let unvisited = [];
+
+                // Check neighbors
+                for (let dir of dirs) {
+                    let nx = current.x + dir.x;
+                    let nz = current.z + dir.z;
+                    if (nx > 0 && nx < MAP_SIZE-1 && nz > 0 && nz < MAP_SIZE-1 && mazeGrid[nz][nx] === 1) {
+                        unvisited.push(dir);
+                    }
+                }
+
+                if (unvisited.length > 0) {
+                    let chosen = unvisited[Math.floor(Math.random() * unvisited.length)];
+                    let nx = current.x + chosen.x;
+                    let nz = current.z + chosen.z;
+                    
+                    // Knock down wall between
+                    mazeGrid[current.z + chosen.z/2][current.x + chosen.x/2] = 0;
+                    mazeGrid[nz][nx] = 0; // Mark visited
+                    stack.push({x: nx, z: nz});
+                } else {
+                    stack.pop();
+                }
+            }
+
+            // Punch random holes to create loops (makes it scarier/less predictable)
+            let loopCount = Math.floor((MAP_SIZE * MAP_SIZE) * 0.05);
+            for(let i=0; i<loopCount; i++) {
+                let rx = Math.floor(Math.random() * (MAP_SIZE - 2)) + 1;
+                let rz = Math.floor(Math.random() * (MAP_SIZE - 2)) + 1;
+                mazeGrid[rz][rx] = 0;
+            }
+            
+            // Ensure outer boundary is solid
+            for(let i=0; i<MAP_SIZE; i++) {
+                mazeGrid[0][i] = 1; mazeGrid[MAP_SIZE-1][i] = 1;
+                mazeGrid[i][0] = 1; mazeGrid[i][MAP_SIZE-1] = 1;
+            }
+        }
+
+        function clearScene() {
+            mapMeshes.forEach(mesh => scene.remove(mesh));
+            mapMeshes = [];
+            
+            if (menuEntity) {
+                scene.remove(menuEntity.mesh);
+                menuEntity = null;
+            }
+            
+            entities.forEach(ent => scene.remove(ent.mesh));
+            entities = [];
+        }
+
+        function build3DWorld() {
+            clearScene();
+
+            const wallTex = createTexture('wall');
+            const floorTex = createTexture('floor');
+            const ceilTex = createTexture('ceil');
+
+            // Scale textures
+            floorTex.repeat.set(MAP_SIZE, MAP_SIZE);
+            ceilTex.repeat.set(MAP_SIZE, MAP_SIZE);
+
+            // Count walls for instancing
+            let wallCount = 0;
+            for(let z = 0; z < MAP_SIZE; z++) {
+                for(let x = 0; x < MAP_SIZE; x++) {
+                    if (mazeGrid[z][x] === 1) wallCount++;
+                }
+            }
+
+            // Wall Material & Geometry
+            const wallGeo = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
+            const wallMat = new THREE.MeshLambertMaterial({ color: 0xffffff, map: wallTex });
+            const wallsInstanced = new THREE.InstancedMesh(wallGeo, wallMat, wallCount);
+            
+            let dummy = new THREE.Object3D();
+            let idx = 0;
+            let emptyCells = []; // Keep track for spawning exit/entity
+
+            for(let z = 0; z < MAP_SIZE; z++) {
+                for(let x = 0; x < MAP_SIZE; x++) {
+                    if (mazeGrid[z][x] === 1) {
+                        dummy.position.set(x * CELL_SIZE, WALL_HEIGHT / 2, z * CELL_SIZE);
+                        dummy.updateMatrix();
+                        wallsInstanced.setMatrixAt(idx++, dummy.matrix);
+                    } else {
+                        // Don't spawn exit/entity near player start (1,1)
+                        if (x > 5 || z > 5) {
+                            emptyCells.push({x, z});
+                        }
+                    }
+                }
+            }
+            scene.add(wallsInstanced);
+            mapMeshes.push(wallsInstanced);
+
+            // Floor and Ceiling
+            const worldSize = MAP_SIZE * CELL_SIZE;
+            const planeGeo = new THREE.PlaneGeometry(worldSize, worldSize);
+            
+            const floorMat = new THREE.MeshLambertMaterial({ color: 0xffffff, map: floorTex });
+            const floor = new THREE.Mesh(planeGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.position.set(worldSize/2 - CELL_SIZE/2, 0, worldSize/2 - CELL_SIZE/2);
+            scene.add(floor);
+            mapMeshes.push(floor);
+
+            const ceilMat = new THREE.MeshLambertMaterial({ color: 0xffffff, map: ceilTex });
+            const ceiling = new THREE.Mesh(planeGeo, ceilMat);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.set(worldSize/2 - CELL_SIZE/2, WALL_HEIGHT, worldSize/2 - CELL_SIZE/2);
+            scene.add(ceiling);
+            mapMeshes.push(ceiling);
+
+            // Place Exit Door
+            if (emptyCells.length > 0) {
+                let exitIdx = Math.floor(Math.random() * emptyCells.length);
+                let exitCell = emptyCells[exitIdx];
+                exitPos.x = exitCell.x * CELL_SIZE;
+                exitPos.z = exitCell.z * CELL_SIZE;
+                
+                const doorGroup = new THREE.Group();
+                
+                // Door frame
+                const frameGeo = new THREE.BoxGeometry(CELL_SIZE * 0.6, WALL_HEIGHT * 0.75, 1.5);
+                const frameMat = new THREE.MeshLambertMaterial({ color: 0x221111 });
+                const frame = new THREE.Mesh(frameGeo, frameMat);
+                frame.position.y = (WALL_HEIGHT * 0.75) / 2;
+                doorGroup.add(frame);
+                
+                // Actual Red Door
+                const doorGeo = new THREE.BoxGeometry(CELL_SIZE * 0.5, WALL_HEIGHT * 0.7, 1.6);
+                const doorMat = new THREE.MeshLambertMaterial({ color: 0xaa0000 }); 
+                const doorMesh = new THREE.Mesh(doorGeo, doorMat);
+                doorMesh.position.y = (WALL_HEIGHT * 0.7) / 2;
+                doorGroup.add(doorMesh);
+                
+                // Doorknob (Brass)
+                const knobGeo = new THREE.SphereGeometry(0.3, 16, 16);
+                const knobMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+                const knob1 = new THREE.Mesh(knobGeo, knobMat);
+                knob1.position.set(CELL_SIZE * 0.15, WALL_HEIGHT * 0.35, 0.85);
+                const knob2 = new THREE.Mesh(knobGeo, knobMat);
+                knob2.position.set(CELL_SIZE * 0.15, WALL_HEIGHT * 0.35, -0.85);
+                doorGroup.add(knob1, knob2);
+                
+                // Glowing Red "EXIT" sign block above door
+                const signGeo = new THREE.BoxGeometry(CELL_SIZE * 0.3, 1.2, 1.8);
+                const signMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const sign = new THREE.Mesh(signGeo, signMat);
+                sign.position.y = WALL_HEIGHT * 0.75 + 0.8;
+                doorGroup.add(sign);
+
+                doorGroup.position.set(exitPos.x, 0, exitPos.z);
+                
+                // Randomly orient the door (facing X or Z axis)
+                if (Math.random() > 0.5) doorGroup.rotation.y = Math.PI / 2;
+
+                scene.add(doorGroup);
+                mapMeshes.push(doorGroup);
+                
+                // Add an eerie red light to the exit
+                const exitLight = new THREE.PointLight(0xff0000, 2.0, CELL_SIZE * 5);
+                exitLight.position.set(exitPos.x, WALL_HEIGHT * 0.6, exitPos.z);
+                scene.add(exitLight);
+                mapMeshes.push(exitLight);
+
+                emptyCells.splice(exitIdx, 1); // Remove from list
+            }
+
+            // Scatter some flickering fluorescent lights
+            for(let i=0; i< (MAP_SIZE*MAP_SIZE) * 0.08; i++) {
+                if(emptyCells.length === 0) break;
+                let cellIdx = Math.floor(Math.random() * emptyCells.length);
+                let cell = emptyCells[cellIdx];
+                const light = new THREE.PointLight(0xff3333, 1.5, CELL_SIZE * 4); // Red point lights
+                light.position.set(cell.x * CELL_SIZE, WALL_HEIGHT - 1, cell.z * CELL_SIZE);
+                scene.add(light);
+                mapMeshes.push(light);
+            }
+
+            // Init Entities
+            spawnEntities(emptyCells);
+        }
+
+        function spawnEntities(emptyCells) {
+            entities = [];
+            for (let i = 0; i < entityCount; i++) {
+                if (emptyCells.length === 0) break;
+                let spawnIdx = Math.floor(Math.random() * emptyCells.length);
+                let spawnCell = emptyCells[spawnIdx];
+
+                const newEntity = createEntity();
+                
+                const entityData = {
+                    active: true,
+                    x: spawnCell.x * CELL_SIZE,
+                    z: spawnCell.z * CELL_SIZE,
+                    targetX: spawnCell.x,
+                    targetZ: spawnCell.z,
+                    limbs: newEntity.limbs
+                };
+
+                newEntity.mesh.position.set(entityData.x, 0, entityData.z);
+                scene.add(newEntity.mesh);
+                
+                entities.push({ mesh: newEntity.mesh, data: entityData });
+                
+                emptyCells.splice(spawnIdx, 1); // remove to prevent stacking
+            }
+        }
+
+        function generateNewGame() {
+            scene.fog = new THREE.FogExp2(COLOR_FOG, 0.035); // Restore normal Backrooms fog
+            generateMazeData();
+            build3DWorld();
+            
+            // Reset player position to start (1,1)
+            controls.getObject().position.set(1 * CELL_SIZE, WALL_HEIGHT * 0.5, 1 * CELL_SIZE);
+            
+            // Reset velocities
+            velocity.set(0, 0, 0);
+            input.forward = input.backward = input.left = input.right = false;
+
+            // Optional: Face into the maze
+            camera.lookAt(2 * CELL_SIZE, WALL_HEIGHT * 0.5, 1 * CELL_SIZE);
+        }
+
+        function checkCollision(x, z) {
+            // Check corners around the player to prevent clipping
+            const r = PLAYER_RADIUS;
+            const checkPoints = [
+                { x: x - r, z: z - r },
+                { x: x + r, z: z - r },
+                { x: x - r, z: z + r },
+                { x: x + r, z: z + r }
+            ];
+
+            for (let pt of checkPoints) {
+                let gridX = Math.floor((pt.x + CELL_SIZE/2) / CELL_SIZE);
+                let gridZ = Math.floor((pt.z + CELL_SIZE/2) / CELL_SIZE);
+
+                // Out of bounds check
+                if (gridX < 0 || gridX >= MAP_SIZE || gridZ < 0 || gridZ >= MAP_SIZE) {
+                    return true; 
+                }
+                // Wall check
+                if (mazeGrid[gridZ][gridX] === 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function updateEntities(dt, playerObj) {
+            if (entities.length === 0) return;
+
+            const px = playerObj.position.x;
+            const pz = playerObj.position.z;
+            
+            let closestDist = Infinity;
+
+            for (let ent of entities) {
+                if (!ent.data.active) continue;
+
+                // Distance to player
+                const distToPlayer = Math.hypot(px - ent.data.x, pz - ent.data.z);
+                if (distToPlayer < closestDist) closestDist = distToPlayer;
+
+                // Check caught
+                if (distToPlayer < CELL_SIZE * 0.8) {
+                    // Snap the camera to look directly at the entity's face
+                    camera.lookAt(ent.data.x, 9, ent.data.z);
+                    setGameState('GAMEOVER');
+                    return; // Stop updating if caught
+                }
+
+                // Move towards grid target
+                let targetWorldX = ent.data.targetX * CELL_SIZE;
+                let targetWorldZ = ent.data.targetZ * CELL_SIZE;
+                
+                let dx = targetWorldX - ent.data.x;
+                let dz = targetWorldZ - ent.data.z;
+                let distToTarget = Math.hypot(dx, dz);
+
+                if (distToTarget < 0.5) {
+                    // Reached target, pick new cell
+                    let currGridX = ent.data.targetX;
+                    let currGridZ = ent.data.targetZ;
+                    let pGridX = Math.floor((px + CELL_SIZE/2) / CELL_SIZE);
+                    let pGridZ = Math.floor((pz + CELL_SIZE/2) / CELL_SIZE);
+
+                    const dirs = [{x:0, z:-1}, {x:1, z:0}, {x:0, z:1}, {x:-1, z:0}];
+                    let validMoves = [];
+
+                    for(let dir of dirs) {
+                        let nx = currGridX + dir.x;
+                        let nz = currGridZ + dir.z;
+                        if (mazeGrid[nz] && mazeGrid[nz][nx] === 0) {
+                            validMoves.push({x: nx, z: nz});
+                        }
+                    }
+
+                    if (validMoves.length > 0) {
+                        // Primitive AI: 70% chance to chase player greedily, 30% wander
+                        if (Math.random() < 0.7 && distToPlayer < CELL_SIZE * 15) {
+                            validMoves.sort((a, b) => {
+                                let da = Math.hypot(a.x - pGridX, a.z - pGridZ);
+                                let db = Math.hypot(b.x - pGridX, b.z - pGridZ);
+                                return da - db; // sort ascending by distance to player
+                            });
+                            ent.data.targetX = validMoves[0].x;
+                            ent.data.targetZ = validMoves[0].z;
+                        } else {
+                            let randomMove = validMoves[Math.floor(Math.random() * validMoves.length)];
+                            ent.data.targetX = randomMove.x;
+                            ent.data.targetZ = randomMove.z;
+                        }
+                    }
+                } else {
+                    // Move entity
+                    let moveAmount = ENTITY_SPEED * dt;
+                    if (moveAmount > distToTarget) moveAmount = distToTarget;
+                    ent.data.x += (dx / distToTarget) * moveAmount;
+                    ent.data.z += (dz / distToTarget) * moveAmount;
+
+                    // Face the direction of movement
+                    ent.mesh.lookAt(targetWorldX, 0, targetWorldZ);
+
+                    // Animate limbs (Bacteria style: creepy wobbly joints)
+                    if (ent.data.limbs) {
+                        const walkCycle = clock.getElapsedTime() * 15; // Fast frantic movement
+                        
+                        // Helper to animate an array of joints
+                        const animateLimb = (joints, offset, amplitude) => {
+                            joints.forEach((joint, i) => {
+                                joint.rotation.x = Math.sin(walkCycle + offset - (i*0.5)) * amplitude;
+                                joint.rotation.z = Math.cos(walkCycle*0.5 + offset) * (amplitude*0.3);
+                            });
+                        };
+
+                        animateLimb(ent.data.limbs.lArm, 0, 0.6);
+                        animateLimb(ent.data.limbs.rArm, Math.PI, 0.6);
+                        animateLimb(ent.data.limbs.lLeg, Math.PI, 0.8);
+                        animateLimb(ent.data.limbs.rLeg, 0, 0.8);
+                        
+                        ent.data.limbs.extra.forEach((xtra, idx) => {
+                            animateLimb(xtra, idx * 2, 0.4);
+                        });
+
+                        // Creepy head twitching
+                        ent.data.limbs.head.rotation.y = Math.sin(walkCycle * 2.5) * 0.3;
+                        ent.data.limbs.head.rotation.z = Math.cos(walkCycle * 1.5) * 0.2;
+                    }
+                }
+
+                ent.mesh.position.set(ent.data.x, 0, ent.data.z);
+            }
+
+            // Proximity static sound logic
+            if (staticSound && gameState === 'PLAYING') {
+                const alertRadius = CELL_SIZE * 5; // Start static within this radius
+                if (closestDist < alertRadius) {
+                    // Map distance to volume (closer = louder, max -5dB, min -40dB)
+                    let vol = -40 + (35 * (1 - (closestDist / alertRadius)));
+                    staticSound.volume.rampTo(vol, 0.2);
+                } else {
+                    staticSound.volume.rampTo(-100, 0.5);
+                }
+            }
+        }
+
+        function gameLoop() {
+            requestAnimationFrame(gameLoop);
+
+            const dt = Math.min(clock.getDelta(), 0.1); // Prevent huge jumps if tabbed out
+            const time = clock.getElapsedTime();
+
+            if (gameState === 'MENU' && menuEntity) {
+                // Spooky idle breathing and twitching animation while on the main menu
+                menuEntity.mesh.position.y = Math.sin(time * 2) * 0.3; // Breathing
+                if (menuEntity.limbs) {
+                    menuEntity.limbs.head.rotation.y = Math.sin(time * 4) * 0.2;
+                    menuEntity.limbs.head.rotation.z = Math.cos(time * 6) * 0.1;
+                    
+                    const animateIdle = (joints, offset) => {
+                        joints.forEach((joint, i) => {
+                            joint.rotation.x = Math.sin(time * 1.5 + offset) * 0.05;
+                        });
+                    };
+                    animateIdle(menuEntity.limbs.lArm, 0);
+                    animateIdle(menuEntity.limbs.rArm, Math.PI);
+                    animateIdle(menuEntity.limbs.lLeg, 0);
+                    animateIdle(menuEntity.limbs.rLeg, 0);
+                    menuEntity.limbs.extra.forEach((x, i) => animateIdle(x, i));
+                }
+            }
+
+            if (gameState === 'PLAYING' && controls.isLocked) {
+                // Player physics/movement logic (Completely rewritten to prevent wall-sticking glitches)
+                const playerObj = controls.getObject();
+
+                // Get camera's forward and right vectors in world space
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+                
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+
+                // Compute desired movement vector
+                const moveVec = new THREE.Vector3(0, 0, 0);
+                if (input.forward) moveVec.add(forward);
+                if (input.backward) moveVec.sub(forward);
+                if (input.right) moveVec.add(right);
+                if (input.left) moveVec.sub(right);
+                
+                if (moveVec.lengthSq() > 0) moveVec.normalize();
+
+                // Smooth velocity
+                const targetVelocity = moveVec.multiplyScalar(PLAYER_SPEED);
+                velocity.lerp(targetVelocity, 12.0 * dt);
+
+                const dx = velocity.x * dt;
+                const dz = velocity.z * dt;
+
+                // Resolve X collision independently in absolute world space
+                if (!checkCollision(playerObj.position.x + dx, playerObj.position.z)) {
+                    playerObj.position.x += dx;
+                } else {
+                    velocity.x = 0;
+                }
+
+                // Resolve Z collision independently in absolute world space
+                if (!checkCollision(playerObj.position.x, playerObj.position.z + dz)) {
+                    playerObj.position.z += dz;
+                } else {
+                    velocity.z = 0;
+                }
+
+                // Footstep Sounds and head bobbing
+                if (stepSound && (Math.abs(velocity.x) > 1 || Math.abs(velocity.z) > 1)) {
+                    if (time - lastStepTime > 0.4) { // Time between steps
+                        stepSound.triggerAttackRelease("16n");
+                        lastStepTime = time;
+                    }
+                    // Head bobbing
+                    playerObj.position.y = (WALL_HEIGHT * 0.5) + Math.sin(time * 15) * 0.4;
+                } else {
+                    playerObj.position.y = (WALL_HEIGHT * 0.5); // Reset bobbing
+                }
+
+                // Check Win Condition
+                if (Math.hypot(playerObj.position.x - exitPos.x, playerObj.position.z - exitPos.z) < CELL_SIZE) {
+                    setGameState('WIN');
+                }
+
+                // Update Entity AI
+                updateEntities(dt, playerObj);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = initEngine;
+
+    </script>
+</body>
+</html>
